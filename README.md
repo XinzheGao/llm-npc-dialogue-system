@@ -1,496 +1,179 @@
-# TIPI-J Based NPC Personality Expression Comparison Using Large Language Models
+# 基于大语言模型的 NPC 人格建模与多轮对话系统
 
-## Project Overview
+**LLM NPC Dialogue System** · Python · DeepSeek / Gemini / Claude · TIPI-J
 
-本项目用于研究在相同人格设定条件下，不同大规模语言模型（Large Language Models, LLMs）生成的游戏NPC对话是否存在人格表达差异。
+面向游戏 NPC 对话与人格表达研究的多角色对话实验项目。通过参数化人格设定、角色提示词和多轮对话历史，组织 NPC 在同一场景中交流，观察不同大语言模型在角色扮演、人格表达和协作行为上的差异。
 
-本研究基于日本版TIPI（TIPI-J）人格模型，将Big Five人格理论应用于NPC人格建模，并通过多个LLM生成NPC之间的协作对话。
+本项目围绕 5 类 NPC 开展了 100 组对话实验，每组包含 15 轮交互，积累不同模型与人格配置下的对话记录，为后续研究分析提供实验材料。该数量为项目实验记录；当前公开仓库未附原始记录或汇总结果，代码默认配置也不等同于这批实验的实际配置。
 
-通过比较不同LLM生成结果的人格一致性，分析不同模型在NPC人格表现方面的特点。
+> **公开代码状态：** 当前仓库包含人格定义、提示词构建、多轮实验主流程、模型分发接口、评价提示词与人格距离计算。`llm_api.py` 中尚未包含三家模型的具体 API 调用实现；完整评测执行与结果统计流程也尚未公开。复现实验需要先补齐相应实现。
 
----
+## 项目目标
 
-## Research Background
+- 将 NPC 人格特征转化为可配置的角色设定，并融入对话提示词。
+- 维护同一场次中的角色信息与历史对话，为观察多轮人格表达的一致性提供基础。
+- 使用统一调用入口切换模型，减少实验流程中的重复开发工作。
+- 在相同初始场景、角色参数和对话规则下，比较不同模型的语言表达与互动行为。
 
-近年来，大规模语言模型（LLM）在游戏AI领域快速发展，使NPC能够生成更加自然和动态的对话。
+## 技术与模块
 
-然而，即使给予相同的人格设定，不同LLM由于训练数据、模型结构以及生成机制的差异，可能表现出不同的人格倾向。
+| 技术 / 模块 | 用途 |
+| --- | --- |
+| Python | 实验流程控制、提示词组织与 JSON 数据保存 |
+| DeepSeek / Gemini / Claude API | 项目使用的模型服务；公开仓库保留统一分发入口 |
+| TIPI-J / Big Five | 人格设定与五维评价的参考框架 |
+| 多轮对话历史 | 为当前角色提供同一场次中此前所有角色的发言 |
+| 欧氏距离 | 比较目标人格参数与评价得到的五维分数 |
 
-例如：
+## NPC 人格设定
 
-- 某些模型可能生成更加积极外向的角色
-- 某些模型可能更加注重礼貌和合作
-- 某些模型可能表现出更加谨慎或保守的行为
+项目参考 TIPI-J 对应的 Big Five 五维人格框架，以 1–7 范围内的参数描述角色。当前代码直接预设五维分数，未包含 TIPI-J 问卷施测、题项计分或反向计分流程。
 
+| 参数 | 维度 |
+| --- | --- |
+| E | 外向性（Extraversion） |
+| A | 宜人性 / 协调性（Agreeableness） |
+| C | 尽责性（Conscientiousness） |
+| N | 神经质 / 情绪不稳定性（Neuroticism） |
+| O | 开放性（Openness） |
 
-因此，本项目研究：
+角色定义位于 [`npc_personality.py`](npc_personality.py)：
 
-> 在统一TIPI-J人格模型和实验条件下，不同LLM是否会产生不同的人格表达。
+| NPC | 人格设定概括 | E | A | C | N | O |
+| --- | --- | --- | --- | --- | --- | --- |
+| Aki | 外向、情绪较稳定 | 6.5 | 5.8 | 4.0 | 2.0 | 5.9 |
+| Mika | 内向、谨慎 | 2.3 | 4.5 | 5.5 | 3.8 | 4.2 |
+| Yui | 共情、重视合作 | 4.8 | 6.6 | 5.2 | 3.5 | 5.4 |
+| Rina | 理性、重视计划 | 3.5 | 3.8 | 6.2 | 2.5 | 5.7 |
+| Kana | 内向、较易焦虑 | 2.0 | 5.9 | 4.8 | 5.9 | 4.9 |
 
----
+这些参数是角色的目标设定，生成的对话是否符合设定，需要结合实际记录与评价结果判断。
 
-# Experimental Design
+## 对话场景与流程
 
+当前示例场景为地震发生三小时后的日本避难所：建筑仍在进行安全检查，现场停电、水与食物不足，并存在余震风险。5 名 NPC 需要协作讨论安全保障与后续行动。场景和角色提示词使用日语，提示词要求角色保持人格、自然交流，并以 2–5 句回复。
 
-## NPC Personality Model
-
-本项目使用TIPI-J对应的Big Five人格维度：
-
-| Dimension | Description |
-|-|-|
-| E | Extraversion（外向性） |
-| A | Agreeableness（協調性） |
-| C | Conscientiousness（誠実性） |
-| N | Neuroticism（神経症傾向） |
-| O | Openness（開放性） |
-
-
-实验中设计5个NPC角色：
-
-| NPC | Personality Feature |
-|-|-|
-| Aki | 外向・楽観的 |
-| Mika | 内向・慎重 |
-| Yui | 共感的・協調型 |
-| Rina | 理性的・計画型 |
-| Kana | 不安傾向・慎重型 |
-
-
-每个NPC具有固定的Big Five人格参数。
-
-
----
-
-# Experimental Scenario
-
-
-为了观察人格差异，本实验设置：
-
-## Earthquake Evacuation Scenario
-
-背景：
-
-```
-大規模地震発生後3時間。
-
-5名のNPCは避難所にいる。
-
-状況：
-- 建物の安全確認中
-- 停電状態
-- 水と食料不足
-- 余震の可能性あり
-
-目的：
-5人で協力し、安全確保と今後の行動を相談する。
+```text
+人格参数 + 场景设定 + 当前对话历史
+                  ↓
+          构建当前 NPC 提示词
+                  ↓
+      generate(model, prompt) 统一入口
+                  ↓
+           获取发言并追加到历史
+                  ↓
+       按角色顺序继续，直至场次结束
+                  ↓
+         汇总保存 results/dialogue.json
 ```
 
+[`main.py`](main.py) 按「模型 → 场次 → 轮次 → 角色」顺序执行。同一场次内的 5 名 NPC 共享对话历史，每次发言后立即追加记录，因此后发言的角色也能看到本轮此前的发言。切换场次时历史清空；当前版本采用完整历史拼接，尚未提供历史裁剪、摘要或跨场次长期记忆。
 
-灾害场景能够促进NPC表现：
+## 仓库结构
 
-- 情绪反应
-- 决策行为
-- 他人关怀
-- 风险判断
-- 计划能力
-
-
-从而更容易观察人格差异。
-
----
-
-# System Architecture
-
-
-```
-TIPI-J Personality Data
-
-        |
-        v
-
-NPC Personality Profile
-
-        |
-        v
-
-Prompt Generator
-
-        |
-        v
-
-+-------------+-------------+-------------+
-|  DeepSeek   |   Gemini    |   Claude    |
-+-------------+-------------+-------------+
-
-        |
-        v
-
-Multi NPC Dialogue Generation
-
-        |
-        v
-
-Big Five Personality Evaluation
-
-        |
-        v
-
-Personality Distance Analysis
-
+```text
+llm-npc-dialogue-system/
+├── main.py              # 多模型、多场次、多角色对话主流程
+├── config.py            # 模型列表、场次数、轮数和场景
+├── npc_personality.py   # 5 名 NPC 的五维人格参数
+├── prompts.py           # 角色、人格、场景与历史的提示词构建
+├── llm_api.py           # 模型分发入口，具体 API 调用待补齐
+├── evaluate.py          # Big Five 人格评价提示词
+├── personality.py       # 五维人格欧氏距离计算
+└── README.md
 ```
 
----
+`results/dialogue.json` 由主流程成功完成后生成，当前仓库未附实验数据。
 
-# Experiment Process
+## 实验配置
 
+在 [`config.py`](config.py) 中修改模型、场次数与轮数：
 
-## Step 1: Personality Definition
-
-根据TIPI-J设置NPC人格：
-
-Example:
-
-```
-Aki
-
-E = 6.5
-A = 5.8
-C = 4.0
-N = 2.0
-O = 5.9
+```python
+MODELS = ["deepseek", "gemini", "claude"]
+SESSION_NUM = 50
+TURN_NUM = 15
 ```
 
+这里 `SESSION_NUM` 表示**每个模型的场次数**，一轮表示 **5 名 NPC 依次各发言一次**。按当前默认配置，完整执行将产生：
 
----
-
-## Step 2: Dialogue Generation
-
-
-每个LLM接收完全相同：
-
-- NPC人格参数
-- 世界背景
-- 对话规则
-
-
-只有语言模型不同。
-
-
-实验流程：
-
-```
-Model
- |
-NPC Personality
- |
-Prompt
- |
-Dialogue Generation
-
+```text
+3 个模型 × 每模型 50 场 × 每场 15 轮 × 每轮 5 次发言
+= 11,250 条发言记录
 ```
 
+该数字是按配置推算的生成规模，不是已公开的实验结果。不同模型使用相同的初始设定与提示词模板；各场对话历史会随模型输出而变化。
 
----
+## 复现说明
 
-## Step 3: Personality Evaluation
-
-
-生成后的NPC发言通过人格评价模块进行分析。
-
-
-评价内容：
-
-```
-E:
-A:
-C:
-N:
-O:
-```
-
-
-范围：
-
-```
-1 - 7
-```
-
-
-评价结果用于计算：
-
-目标人格与实际表现人格之间的距离。
-
-
----
-
-# Personality Distance
-
-
-使用欧氏距离：
-
-\[
-D=
-\sqrt{
-(E_t-E_g)^2+
-(A_t-A_g)^2+
-(C_t-C_g)^2+
-(N_t-N_g)^2+
-(O_t-O_g)^2
-}
-\]
-
-
-其中：
-
-- \(T\)：目标TIPI-J人格
-- \(G\)：LLM生成的人格
-
-
-距离越小：
-
-表示NPC人格表现越接近设定人格。
-
-
----
-
-# Project Structure
-
-
-```
-NPC_Personality_Comparison/
-
-│
-├── main.py
-│   └── NPC dialogue generation experiment
-│
-├── evaluate.py
-│   └── Personality evaluation
-│
-├── config.py
-│   └── Experiment parameters
-│
-├── npc_personality.py
-│   └── TIPI-J personality definition
-│
-├── prompts.py
-│   └── Prompt generation
-│
-├── llm_api.py
-│   └── LLM interface
-│
-├── personality.py
-│   └── Distance calculation
-│
-└── results/
-
-    ├── dialogue.json
-    ├── evaluated.json
-    └── statistics.csv
-
-```
-
-
----
-
-# Experiment Parameters
-
-
-Default setting:
-
-| Parameter | Value |
-|-|-|
-| LLM | DeepSeek / Gemini / Claude |
-| NPC Number | 5 |
-| Scenario | Earthquake evacuation |
-| Dialogue Turn | 15 |
-| Session Number | 50 |
-
-
-Total generated dialogue:
-
-```
-3 models
-×
-5 NPCs
-×
-50 sessions
-×
-15 turns
-
-= 11250 dialogue samples
-```
-
-
----
-
-# Data Format
-
-
-## Dialogue Data
-
-`dialogue.json`
-
-Example:
-
-
-```json
-{
- "model":"DeepSeek",
- "session":1,
- "turn":3,
- "npc":"Kana",
- "text":"まだ余震が来るかもしれません..."
-}
-
-```
-
-
----
-
-## Evaluation Data
-
-
-`evaluated.json`
-
-
-Example:
-
-```json
-{
- "npc":"Kana",
-
- "generated_score":
- {
-   "E":2.5,
-   "A":5.8,
-   "C":4.2,
-   "N":5.7,
-   "O":4.6
- },
-
- "distance":0.18
-}
-
-```
-
-
----
-
-# Installation
-
-
-Install required libraries:
-
+### 1. 获取代码
 
 ```bash
-pip install requests python-dotenv
+git clone https://github.com/XinzheGao/llm-npc-dialogue-system.git
+cd llm-npc-dialogue-system
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
+### 2. 补齐模型调用
 
----
+[`llm_api.py`](llm_api.py) 提供 `generate(model, prompt)` 分发入口，但调用的 `deepseek(prompt)`、`gemini(prompt)` 和 `claude(prompt)` 函数尚未定义。运行前需要实现这些函数，使其接收提示词并返回回复文本，再按所采用的 SDK 或 HTTP 实现安装依赖、配置模型 ID 与 API 密钥。
 
-# Running Experiment
+建议通过环境变量读取密钥，并先使用单个模型、1 场、1 轮验证调用。当前仓库没有自动读取环境变量的实现，也没有统一依赖清单。未补齐 API 函数时直接运行主流程会报错。
 
+### 3. 生成对话记录
 
-## 1. Dialogue Generation
-
+完成 API 实现并调整配置后运行：
 
 ```bash
 python main.py
 ```
 
+主流程在全部对话结束后将记录写入 `results/dialogue.json`。当前没有断点续跑或逐轮持久化，运行前应根据配置确认调用规模。
 
-Output:
+## 数据格式
 
-```
-results/dialogue.json
-```
+每条记录保存模型、场次、轮次、角色和发言文本。`session` 与 `turn` 从 0 开始计数。以下为格式示例，非实验原始数据：
 
-
----
-
-## 2. Personality Evaluation
-
-
-```bash
-python evaluate.py
-```
-
-
-Output:
-
-```
-results/evaluated.json
+```json
+{
+  "model": "deepseek",
+  "session": 0,
+  "turn": 0,
+  "npc": "Kana",
+  "text": "まだ余震が来るかもしれません。まず安全な場所を確認したいです。"
+}
 ```
 
+## 人格评价与模型比较
 
----
+[`evaluate.py`](evaluate.py) 中的 `evaluation_prompt(npc, text)` 构建评价提示词，要求对发言的 E、A、C、N、O 五维分别给出 1–7 分。该文件目前仅定义函数，直接运行不会自动调用评价模型或生成评价文件。
 
-# Research Questions
+[`personality.py`](personality.py) 中的 `distance(target, generated)` 计算两组五维分数的欧氏距离：
 
+$$
+D = \sqrt{\sum_{d \in \{E,A,C,N,O\}} (T_d - G_d)^2}
+$$
 
-This project investigates:
+其中，$T$ 为目标人格参数，$G$ 为评价分数。距离可作为比较表达与设定差异的辅助指标；评价模型、评分提示词与文本长度均可能影响结果，不能仅凭该距离判断人格建模效果。
 
+本项目关注的比较问题包括：
 
-## RQ1
+- 不同模型在同一角色设定下，是否呈现不同的语言风格与情绪表达？
+- 多轮互动中，角色表达是否持续符合初始人格设定？
+- 合作、风险判断与计划行为是否随模型和人格配置而变化？
 
-不同LLM是否会产生不同NPC人格表现？
+当前公开代码尚未包含完整评分调用、结果解析、统计汇总或模型排名；不据此宣称某个模型表现最优。
 
+## 后续改进
 
-## RQ2
+- 补齐并公开 API 适配实现、依赖清单与环境变量示例。
+- 增加调用重试、异常处理、逐轮保存和断点续跑。
+- 记录具体模型版本、采样参数、提示词版本与实验配置。
+- 完成人格评分解析与汇总，并结合人工评价检查评分一致性。
+- 在数据整理后提供可复现的对话样例与统计结果。
+- 探索历史摘要、长期记忆和情绪状态等扩展能力。
 
-哪个LLM生成的人格与TIPI-J设定更加一致？
+## 作者
 
-
-## RQ3
-
-不同LLM是否存在固定人格表达偏向？
-
-
----
-
-# Expected Results
-
-
-最终比较：
-
-| Model | Personality Distance |
-|-|-|
-| DeepSeek | - |
-| Gemini | - |
-| Claude | - |
-
-
-并分析：
-
-- 外向性表达差异
-- 情绪表达差异
-- 协调行为差异
-- 决策风格差异
-
-
----
-
-# Future Work
-
-未来可以进一步扩展：
-
-- NPC长期记忆（Memory）
-- 情绪状态变化（Emotion）
-- 人际关系模型（Relationship）
-- Multi-Agent协作
-- 动态人格演化
-
-
-最终目标：
-
-> 从静态人格NPC发展为具有长期记忆和自主行为能力的智能游戏Agent。
-
-
----
-
-# Author
-
-Research Project:
-
-**TIPI-J Based Personality Expression Analysis of NPC Dialogue Generation Using Large Language Models**
+[Xinzhe Gao](https://github.com/XinzheGao) · 开发者、研究参与者
